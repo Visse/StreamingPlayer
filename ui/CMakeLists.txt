@@ -1,0 +1,17 @@
+
+
+set( STREAMING_PLAYER_UI
+   ${STREAMING_PLAYER_UI}
+   ${CMAKE_CURRENT_SOURCE_DIR}/MainWindow.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/SearchDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/VideoTile.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/VideoPlayer.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/ReleatedDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/DescriptionDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/HistoryDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/ChannelTile.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/UploadDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/CommentTile.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/WatchLaterDock.ui
+   PARENT_SCOPE
+ )

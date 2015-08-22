@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/StreamingPlayer">
+        <file alias="Icon">icon.png</file>
+    </qresource>
+</RCC>
