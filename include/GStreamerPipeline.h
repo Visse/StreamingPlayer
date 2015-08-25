@@ -53,6 +53,8 @@ public slots:
     void addStream( QString uri, StreamType type );
 
     void seek( QTime position );
+
+    void expose();
     
 signals:
     void stateChanged( PipelineState oldState, PipelineState newState );
@@ -83,10 +85,10 @@ private:
     QGst::ElementPtr  mPlaySink;
 
     QVector<StreamInfo> mStreams;
-
-    QGst::BinPtr mSink;
-    QGst::VideoOverlayPtr mVideoSink;
     
     PipelineState mState = PS_Null;
     bool mPlayAfterBuffering = false;
+
+    QTime mLenght,
+          mPosition;
 };

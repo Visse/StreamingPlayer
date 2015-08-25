@@ -59,6 +59,31 @@ public slots:
     }
 };
 
+class ExposeEventFilter :
+    public QObject
+{
+     GStreamerPipeline *mPipeline;
+public:
+    ExposeEventFilter( QObject *parent, GStreamerPipeline *pipeline) :
+            QObject(parent),
+            mPipeline(pipeline)
+    {}
+
+    virtual bool eventFilter( QObject *object, QEvent *event ) override
+    {
+        QEvent::Type type = event->type();
+        if( type == QEvent::Expose ||type == QEvent::Paint ) {
+            mPipeline->expose();
+            return true;
+        }
+        if( type == QEvent::Resize ) {
+            mPipeline->expose();
+        }
+        return QObject::eventFilter( object, event );
+    }
+
+};
+
 GStreamerWidget::GStreamerWidget( QWidget *parent ) :
     QWidget(parent)
 {
@@ -73,7 +98,7 @@ GStreamerWidget::GStreamerWidget( QWidget *parent ) :
     mPositionTimer = new QTimer( this );
     mPositionTimer->setInterval( 100 );
     connect( mPositionTimer, SIGNAL(timeout()), SLOT(onPositionUpdate()) );
-
+    
     connect( ui.playPauseButton, SIGNAL(clicked()), SLOT(tooglePlayPause()) );
      {
         QMenu *menu = new QMenu;
@@ -332,10 +357,12 @@ void GStreamerWidget::onPositionUpdate()
 {
     Q_ASSERT( mPipeline );
  
+    if( mUserSeeks ) return;
+
     int lenght = -mPipeline->getLenght().msecsTo( QTime(0,0) );
     int position = -mPipeline->getPosition().msecsTo( QTime(0,0) );
-    mPositionSlider->setMaximum( lenght );
-    mPositionSlider->setValue( position );
+    mPositionSlider->setMaximum( lenght/10  );
+    mPositionSlider->setValue( position/10 );
 }
 
 void GStreamerWidget::entryChanged()
@@ -385,7 +412,7 @@ void GStreamerWidget::positionSliderReleased()
     mUserSeeks = false;
 
     int pos = mPositionSlider->value();
-    QTime time = QTime::fromMSecsSinceStartOfDay( pos*10 );
+    QTime time = QTime(0,0).addMSecs( pos*10 );
     seek( time );
 
     internalResume();
@@ -562,7 +589,7 @@ void GStreamerWidget::formatChanged( QString formatId, bool isCustom )
     internalPause();
 
     mPositionSlider->setValue( 0 );
-    mPositionSlider->setRange( 0, 0);
+    mPositionSlider->setMaximum( 0 );
     mHaveVideoSource = true;
 
     auto iter = mFormatIdToAction.find( formatId );
@@ -583,6 +610,10 @@ void GStreamerWidget::createPipeline()
     mPipeline = new GStreamerPipeline( this );
     mVideoWidget->watchPipeline( mPipeline->getPipeline() );
 
+    ExposeEventFilter *filter = new ExposeEventFilter(mPipeline, mPipeline);
+    mVideoWidget->installEventFilter( filter );
+    mVideoWidget->setUpdatesEnabled( false );
+
     connect( mPipeline, SIGNAL(buffering(int)), SLOT(onBuffering(int)) );
 
     mPositionTimer->start();
@@ -595,11 +626,13 @@ void GStreamerWidget::createPipeline()
 void GStreamerWidget::destroyPipeline()
 {
     mVideoWidget->stopPipelineWatch();
+    mVideoWidget->setUpdatesEnabled( true );
 
     delete mPipeline;
     mPipeline = nullptr;
 
     mPositionTimer->stop();
+
 }
 
 #include "GStreamerWidget.moc"

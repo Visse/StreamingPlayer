@@ -36,21 +36,28 @@ GStreamerPipeline::~GStreamerPipeline()
 QTime GStreamerPipeline::getLenght()
 {
     QGst::DurationQueryPtr quary = QGst::DurationQuery::create( QGst::FormatTime );
+
+    // We store the last known lenght in a member since sometimes the quary fails.
+    // most noticable right after a seek.
     if( mPipeline->query(quary) ) {
-        return QGst::ClockTime(quary->duration()).toTime();
+        mLenght = QGst::ClockTime(quary->duration()).toTime();
     }
-    qDebug() << "Failed to quary duration of pipeline!";
-    return QTime();
+    else {
+        qDebug() << "Failed to quary duration of pipeline!";
+    }
+    return mLenght;
 }
 
 QTime GStreamerPipeline::getPosition()
 {
     QGst::PositionQueryPtr quary = QGst::PositionQuery::create( QGst::FormatTime );
     if( mPipeline->query(quary) ) {
-        return QGst::ClockTime(quary->position()).toTime();
+        mPosition = QGst::ClockTime(quary->position()).toTime();
     }
-    qDebug() << "Failed to quary position of pipeline!";
-    return QTime();
+    else {
+        qDebug() << "Failed to quary position of pipeline!";
+    }
+    return mPosition;
 }
 
 void GStreamerPipeline::play()
@@ -110,6 +117,16 @@ void GStreamerPipeline::addStream( QString uri, StreamType type )
 void GStreamerPipeline::seek( QTime position )
 {
     mPipeline->seek( QGst::FormatTime, QGst::SeekFlagAccurate | QGst::SeekFlagFlush, QGst::ClockTime::fromTime(position) );
+    // the quary about position is failing right after a seek, before the pipeline have got its new data.
+    // so we help it out by seting our position to the seek position.
+    mPosition = position;
+}
+
+void GStreamerPipeline::expose()
+{
+    QGst::VideoOverlayPtr overlay = mPlaySink.dynamicCast<QGst::VideoOverlay>();
+    Q_ASSERT( overlay );
+    overlay->expose();
 }
 
 void GStreamerPipeline::sourceSetup( QGst::ElementPtr source )
@@ -208,3 +225,4 @@ void GStreamerPipeline::onBuffering( const QGst::BufferingMessagePtr &msg )
         }
     }
 }
+
