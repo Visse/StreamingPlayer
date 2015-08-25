@@ -1,15 +1,11 @@
 #include "GStreamerWidget.h"
 #include "Feed.h"
 #include "VideoProvider.h"
+#include "GStreamerPipeline.h"
 
 #include "ui_VideoPlayer.h"
+#include "ui_CreateCustomFormatDialog.h"
 
-#include <QGst/pipeline.h>
-#include <QGst/elementfactory.h>
-#include <QGst/message.h>
-#include <QGst/bus.h>
-#include <QGst/query.h>
-#include <QGlib/connect.h>
 
 #include <qtimer.h>
 #include <qmenu.h>
@@ -70,6 +66,7 @@ GStreamerWidget::GStreamerWidget( QWidget *parent ) :
     ui.setupUi( this );
     mWidget = ui.widget;
     mOverlay = ui.overlay;
+    mVideoWidget = ui.video;
     
     mPositionSlider = ui.timeSlider;
     
@@ -117,26 +114,6 @@ GStreamerWidget::GStreamerWidget( QWidget *parent ) :
     connect( this, SIGNAL(bufferingProgress(int)), ui.bufferProgress, SLOT(setValue(int)) );
     ui.bufferProgress->hide();
 
-    mPipeline = QGst::ElementFactory::make("playbin").dynamicCast<QGst::Pipeline>();
-    Q_ASSERT( mPipeline );
-    mPipeline->setProperty( "buffer-duration", QGst::ClockTime::fromSeconds(20) );
-    QGlib::connect( mPipeline, "source-setup", this, &GStreamerWidget::sourceSetup );
-
-    ui.video->watchPipeline( mPipeline );
-
-
-    QGst::BusPtr bus = mPipeline->bus();
-    bus->addSignalWatch();
-    QGlib::connect(bus, "message", this, &GStreamerWidget::onBusMessage);
-    /*
-    setAttribute( Qt::WA_NoSystemBackground, true );
-    setAttribute( Qt::WA_OpaquePaintEvent, true );
-    setWindowFlags(  windowFlags() | Qt::FramelessWindowHint );
-    ui.video->setAttribute( Qt::WA_NoSystemBackground, true );
-    ui.video->setAttribute( Qt::WA_OpaquePaintEvent, true );
-    ui.video->setWindowFlags(  ui.video->windowFlags() | Qt::FramelessWindowHint );
-    */
-    
     mOverlayTimer = new QTimer( this );
     mOverlayTimer->setSingleShot( true );
     mOverlayTimer->setInterval( 1000 );
@@ -158,27 +135,25 @@ GStreamerWidget::GStreamerWidget( QWidget *parent ) :
 
 GStreamerWidget::~GStreamerWidget()
 {
-    mPipeline->setState( QGst::StateNull );
     mWidget->deleteLater();
 }
 
 QTime GStreamerWidget::position()
 {
-    QGst::PositionQueryPtr query = QGst::PositionQuery::create(QGst::FormatTime);
-    mPipeline->query( query );
-    return QGst::ClockTime(query->position()).toTime();
+    /// @todo
+    return QTime();
 }
 
 QTime GStreamerWidget::lenght()
 {
-    QGst::DurationQueryPtr query = QGst::DurationQuery::create(QGst::FormatTime);
-    mPipeline->query(query);
-    return QGst::ClockTime(query->duration()).toTime();
+    /// @todo
+    return QTime();
 }
 
 bool GStreamerWidget::isPlaying()
 {
-    return mTargetState == QGst::StatePlaying;
+    /// @todo
+    return false;
 }
 
 void GStreamerWidget::setEntry( QSharedPointer<Entry> entry )
@@ -201,30 +176,28 @@ void GStreamerWidget::setVideoProvider( QSharedPointer<VideoProvider> provider )
 
 void GStreamerWidget::play()
 {
-    mPipeline->setState( QGst::StatePlaying );
-    mTargetState = QGst::StatePlaying;
-    mInternalPaused = false;
+    if( mPipeline ) {
+        mPipeline->play();
+    }
 }
 
 void GStreamerWidget::pause()
 {
-    mPipeline->setState( QGst::StatePaused );
-    mTargetState = QGst::StatePaused;
-    mInternalPaused = false;
+    if( mPipeline ) {
+        mPipeline->pause();
+    }
 }
 
 void GStreamerWidget::stop()
 {
-    mPipeline->setState( QGst::StateReady );
-    mPositionTimer->stop();
-    mTargetState = QGst::StateReady;
-    mInternalPaused = false;
+    mVideoWidget->stopPipelineWatch();
+    destroyPipeline();
     mHaveVideoSource = false;
 }
 
 void GStreamerWidget::tooglePlayPause()
 {
-    if( mTargetState == QGst::StatePlaying && !mIsBuffering ) {
+    if( mPipeline && mPipeline->getState() == PS_Playing ) {
         pause();
     }
     else {
@@ -234,66 +207,69 @@ void GStreamerWidget::tooglePlayPause()
 
 void GStreamerWidget::seek( QTime time )
 {
-    mPipeline->seek( QGst::FormatTime, QGst::SeekFlagAccurate|QGst::SeekFlagFlush, QGst::ClockTime::fromTime(time) );
+    if( mPipeline ) {
+        mPipeline->seek( time );
+    }
 }
-
-static const int DEFAULT_PLAYBIN_FLAGS = 0x617;
 
 void GStreamerWidget::modeNormal()
 {
     mMode = PM_Normal;
-    // default flags + visualisation if no video
-    mPipeline->setProperty( "flags", DEFAULT_PLAYBIN_FLAGS | 0x8 );
-    mUserChooseFormat = false;
-    mModeNormalAction->setChecked( true );
+    if( mPipeline ) {
+        mPipeline->enableVideo();
+    }
 }
 
 void GStreamerWidget::modeVisual()
 {
     mMode = PM_Visual;
-    // default flags + visualisation if no video
-    mPipeline->setProperty( "flags", DEFAULT_PLAYBIN_FLAGS | 0x8 );
-    mUserChooseFormat = false;
-    mModeVisualAction->setChecked( true );
+    if( mPipeline ) {
+        mPipeline->enableVideo();
+    }
 }
 
 void GStreamerWidget::modeAudioOnly()
 {
     mMode = PM_AudioOnly;
-    // default flags, without vidoe video
-    mPipeline->setProperty( "flags", DEFAULT_PLAYBIN_FLAGS & ~0x1 );
-    mUserChooseFormat = false;
-    mModeAudioOnlyAction->setChecked( true );
+    if( mPipeline ) {
+        mPipeline->disableVideo();
+    }
 }
 
 void GStreamerWidget::setFormat( QString formatId )
 {
-    stop();
-    if( !mProvider ) return;
+    if( !formatIsAboutToChange() ) return;
+
     QList<Format> formats = mProvider->getFormats();
     for( const Format &format : formats ) {
         if( format.id == formatId ) {
-            mPipeline->setProperty( "uri", format.url );
-            /// @todo option for autoplay
-            play();
-            // buffering...
-            internalPause();
-
-            mPositionSlider->setValue( 0 );
-            mPositionSlider->setRange( 0, 0);
-            mHaveVideoSource = true;
-            playbackStarted( mEntry );
-
-            auto iter = mFormatIdToAction.find( formatId );
-            if( iter != mFormatIdToAction.end() ) {
-                (*iter)->setChecked( true );
+            StreamType type;
+            switch ( format.type ) {
+            case( VT_Normal ):
+                type = ST_Video | ST_Audio;
+                break;
+            case( VT_AudioOnly ):
+                type = ST_Audio;
+                break;
+            case( VT_VideoOnly ):
+                type = ST_Video;
+                break;
             }
-            mCurrentFormatId = formatId;
-            mUserChooseFormat = true;
+
+            mPipeline->addStream( format.url, type );
+
+            formatChanged( formatId, false );
             return;
         }
     }
 }
+
+void GStreamerWidget::setCustomFormat( QString formatTitle )
+{
+    if( !formatIsAboutToChange() ) return;
+    /// @todo
+}
+
 
 void GStreamerWidget::toogleFullscreen()
 {
@@ -342,87 +318,24 @@ void GStreamerWidget::noFullscreen()
     }
 }
 
-void GStreamerWidget::onBusMessage( const QGst::MessagePtr &message )
+void GStreamerWidget::showCreateCustomFormat()
 {
-    switch (message->type()) {
-    case QGst::MessageEos:
-        playbackFinnished();
-        break;
-    case QGst::MessageError: {
-        QGst::ErrorMessagePtr errorMsg = message.staticCast<QGst::ErrorMessage>();
-        qCritical() << errorMsg->error();
-        int ret = QMessageBox::critical( mWidget, "GStreamer Error", QString( "%1: %2").arg(errorMsg->source()->pathString(), errorMsg->error().what()), QMessageBox::Cancel|QMessageBox::Retry, QMessageBox::Retry );
-        if( ret == QMessageBox::Retry ) {
-            
-        }
-        stop();
-        playbackFinnished();
-      } break;
-    case QGst::MessageStateChanged:
-        if (message->source() == mPipeline ) {
-            QGst::StateChangedMessagePtr stateChange = message.staticCast<QGst::StateChangedMessage>();
-            if( stateChange->newState() == QGst::StatePlaying ) {
-                mPositionTimer->start();
-            }
-            else {
-                mPositionTimer->stop();
-            }
-        }
-        break;
-    case( QGst::MessageBuffering ):{
-            QGst::BufferingMessagePtr buffering = message.staticCast<QGst::BufferingMessage>();
+    QDialog *dialog = new QDialog( mWidget );
 
-            if( buffering->percent() == 100 ) {
-                qDebug() << "Finnished buffering.";
-                mIsBuffering = false;
-                bufferingEnded();
-                internalResume();
-            }
-            else {
-                if( !mIsBuffering ) {
-                    qDebug() << "Buffering " << buffering->percent() << "%";
-                    mIsBuffering = true;
-                    bufferingStarted();
-                    internalPause();
-                }
-                bufferingProgress( buffering->percent() );
-            }
-        } break;
-    case( QGst::MessageClockLost ):
-        qDebug() << "Clock lost!";
-        mPipeline->setState( QGst::StatePaused );
-        if( mTargetState == QGst::StatePlaying ) {
-            mPipeline->setState( QGst::StatePlaying );
-        }
-        break;
-    default:
-        break;
-    }
+    Ui::CreateCustomFormatDialog ui;
+    ui.setupUi( dialog );
+
+    dialog->show();
 }
 
 void GStreamerWidget::onPositionUpdate()
 {
-    if( mUserSeeks ) return;
-    QTime pos_ = position();
-    QTime len_ = lenght();
-
-    int pos = -pos_.msecsTo( QTime(0,0) );
-    int len = -len_.msecsTo( QTime(0,0) );
-    
-    mPositionSlider->setMaximum( len/10 );
-    mPositionSlider->setValue( pos/10 );
-
-    bool over1h = len_.hour() > 0;
-    if( over1h ) {
-        mPositionSliderTooltip = QString("%1 / %2").arg( pos_.toString("hh:mm:ss"), len_.toString("hh:mm:ss") );
-    }
-    else {
-        mPositionSliderTooltip = QString("%1 / %2").arg( pos_.toString("mm:ss"), len_.toString("mm:ss") );
-    }
-
-    if( mPositionSlider->underMouse() ) {
-        QToolTip::showText( QCursor::pos(), mPositionSliderTooltip, mPositionSlider );
-    }
+    Q_ASSERT( mPipeline );
+ 
+    int lenght = -mPipeline->getLenght().msecsTo( QTime(0,0) );
+    int position = -mPipeline->getPosition().msecsTo( QTime(0,0) );
+    mPositionSlider->setMaximum( lenght );
+    mPositionSlider->setValue( position );
 }
 
 void GStreamerWidget::entryChanged()
@@ -478,9 +391,30 @@ void GStreamerWidget::positionSliderReleased()
     internalResume();
 }
 
-void GStreamerWidget::sourceSetup( QGst::ElementPtr source )
+void GStreamerWidget::formatSelected( QObject *format )
 {
-    source->setProperty( "ssl-strict", false );
+    QAction *action = qobject_cast<QAction*>( format );
+    QVariantMap data = action->data().toMap();
+
+    if( data["custom"].toBool() ) {
+        setCustomFormat( data["id"].toString() );
+    }
+    else {
+        setFormat( data["id"].toString() );
+    }
+}
+
+void GStreamerWidget::onBuffering( int percent )
+{
+    if( !mIsBuffering ) bufferingStarted();
+    mIsBuffering = true;
+
+    bufferingProgress( percent );
+
+    if( percent == 100 ) {
+        mIsBuffering = false;
+        bufferingEnded();
+    }
 }
 
 bool GStreamerWidget::findFormatForMode( PlayerMode mode, Format &format )
@@ -523,10 +457,8 @@ bool GStreamerWidget::findFormatForMode( PlayerMode mode, Format &format )
 void GStreamerWidget::internalPause()
 {
     if( mInternalPaused ) return;
-    if( mTargetState == QGst::StatePlaying ) {
-        mPipeline->setState( QGst::StatePaused );
-        mInternalPaused = true;
-    }
+    
+    /// @todo
 }
 
 void GStreamerWidget::internalResume()
@@ -534,22 +466,22 @@ void GStreamerWidget::internalResume()
     if( !mInternalPaused ) return;
     if( mIsBuffering || mUserSeeks ) return;
 
-    if( mTargetState == QGst::StatePlaying ) {
-        mPipeline->setState( QGst::StatePlaying );
-        mInternalPaused = false;
-    }
+    /// @todo
 }
 
 void GStreamerWidget::populateFormatMenu()
 {
     delete mFormatGroup;
     delete mFormatMapper;
+
+    mFormatMenu->clear();
+
     mFormatGroup = new QActionGroup( this );
     mFormatMapper = new QSignalMapper( this );
     mFormatGroup->setExclusive( true );
     mFormatIdToAction.clear();;
-
-    connect( mFormatMapper, SIGNAL(mapped(QString)), SLOT(setFormat(QString)) );
+    
+    connect( mFormatMapper, SIGNAL(mapped(QObject*)), SLOT(formatSelected(QObject*)) );
     if( !mProvider ) return;
 
     QList<Format> formatList = mProvider->getFormats();
@@ -559,8 +491,13 @@ void GStreamerWidget::populateFormatMenu()
         action->setCheckable( true );
         mFormatMenu->addAction( action );
 
+        QVariantMap data;
+            data["custom"] = false;
+            data["id"] = f.id;
+        action->setData( data );
+        
         connect( action, SIGNAL(triggered()), mFormatMapper, SLOT(map()) );
-        mFormatMapper->setMapping( action, f.id );
+        mFormatMapper->setMapping( action, action );
 
         mFormatIdToAction.insert( f.id, action );
 
@@ -568,6 +505,101 @@ void GStreamerWidget::populateFormatMenu()
             action->setChecked( true );
         }
     }
+
+    if( !mCustomFormats.isEmpty() ) {
+        mFormatMenu->addSeparator();
+        for( const CustomFormat &format : mCustomFormats ) {
+            QAction *action = mFormatGroup->addAction( format.title );
+            action->setCheckable( true );
+            mFormatMenu->addAction( action );
+            
+            QVariantMap data;
+                data["custom"] = true;
+                data["id"] = format.title;
+            action->setData( data );
+            
+            connect( action, SIGNAL(triggered()), mFormatMapper, SLOT(map()) );
+            mFormatMapper->setMapping( action, action );
+        }
+    }
+
+    mFormatMenu->addSeparator();
+    QAction *createCustomFormat = mFormatMenu->addAction( "Create Custom Format" );
+    connect( createCustomFormat, SIGNAL(triggered()), SLOT(showCreateCustomFormat()) );
+}
+
+bool GStreamerWidget::isProviderSupportingCustomFormat( const CustomFormat &format )
+{
+    if( !mProvider ) return false;
+
+    const QList<Format> formats = mProvider->getFormats();
+    QSet<QString> ids;
+
+    for( const Format &f : formats ) {
+        ids.insert( f.id );
+    }
+
+    for( const CustomStream &stream : format.streams ) {
+        if( !ids.contains(stream.formatId) ) return false;
+    }
+    return true;
+}
+
+bool GStreamerWidget::formatIsAboutToChange()
+{
+    stop();
+    if( !mProvider ) return false;
+    createPipeline();
+    
+    return true;
+}
+
+void GStreamerWidget::formatChanged( QString formatId, bool isCustom )
+{
+    /// @todo option for autoplay
+    play();
+    // buffering...
+    internalPause();
+
+    mPositionSlider->setValue( 0 );
+    mPositionSlider->setRange( 0, 0);
+    mHaveVideoSource = true;
+
+    auto iter = mFormatIdToAction.find( formatId );
+    if( iter != mFormatIdToAction.end() ) {
+        (*iter)->setChecked( true );
+    }
+    mCurrentFormatId = formatId;
+    mUserChooseFormat = true;
+    mIsCustomFormat = isCustom;
+
+    playbackStarted( mEntry );
+}
+
+void GStreamerWidget::createPipeline()
+{
+    Q_ASSERT( mPipeline == nullptr );
+
+    mPipeline = new GStreamerPipeline( this );
+    mVideoWidget->watchPipeline( mPipeline->getPipeline() );
+
+    connect( mPipeline, SIGNAL(buffering(int)), SLOT(onBuffering(int)) );
+
+    mPositionTimer->start();
+
+    if( mMode == PM_AudioOnly ) {
+        mPipeline->disableVideo();
+    }
+}
+
+void GStreamerWidget::destroyPipeline()
+{
+    mVideoWidget->stopPipelineWatch();
+
+    delete mPipeline;
+    mPipeline = nullptr;
+
+    mPositionTimer->stop();
 }
 
 #include "GStreamerWidget.moc"

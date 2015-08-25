@@ -13,5 +13,6 @@ set( STREAMING_PLAYER_UI
    ${CMAKE_CURRENT_SOURCE_DIR}/UploadDock.ui
    ${CMAKE_CURRENT_SOURCE_DIR}/CommentTile.ui
    ${CMAKE_CURRENT_SOURCE_DIR}/WatchLaterDock.ui
+   ${CMAKE_CURRENT_SOURCE_DIR}/CreateCustomFormatDialog.ui
    PARENT_SCOPE
  )

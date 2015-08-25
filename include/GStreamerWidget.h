@@ -2,9 +2,8 @@
 
 
 #include <QtWidgets/qwidget.h>
-
-#include <QGst/element.h>
-#include <QGst/pipeline.h>
+#include <QMap>
+#include <QTime>
 
 class Entry;
 class QSlider;
@@ -13,6 +12,15 @@ struct Format;
 class QSignalMapper;
 class QActionGroup;
 class QMenu;
+class GStreamerPipeline;
+
+enum StreamType : unsigned;
+
+namespace QGst {
+    namespace Ui {
+        class VideoWidget;
+    }
+}
 
 class GStreamerWidget :
     public QWidget 
@@ -50,13 +58,15 @@ public slots:
     void modeAudioOnly();
 
     void setFormat( QString formatId );
+    void setCustomFormat( QString formatTitle );
 
     void toogleFullscreen();
     void fullscreen();
     void noFullscreen();
+    
+    void showCreateCustomFormat();
 
 private slots:
-    void onBusMessage( const QGst::MessagePtr &message );
     void onPositionUpdate();
     void entryChanged();
     void videoProviderChanged();
@@ -64,15 +74,30 @@ private slots:
 
     void positionSliderPressed();
     void positionSliderReleased();
-    
+
+    void formatSelected( QObject *format );
+
+    void onBuffering( int percent );
+        
+
 private:
     enum PlayerMode {
         PM_Normal,
         PM_Visual,
         PM_AudioOnly
     };
+
+    struct CustomStream {
+        QString formatId;
+        StreamType type;
+    };
+    struct CustomFormat {
+        QVector<CustomStream> streams;
+        QString title;
+    };
+
+
 private:
-    void sourceSetup( QGst::ElementPtr source );
     bool findFormatForMode( PlayerMode mode, Format &format );
 
     void internalPause();
@@ -80,20 +105,26 @@ private:
 
     void populateFormatMenu();
 
+    bool isProviderSupportingCustomFormat( const CustomFormat &format );
+
+    bool formatIsAboutToChange();
+    void formatChanged( QString formatId, bool isCustom );
+        
+    void createPipeline();
+    void destroyPipeline();
 private:
     QWidget *mWidget = nullptr;
-
-    QGst::PipelinePtr mPipeline;
-    QGst::State mTargetState = QGst::StateNull;
+    QGst::Ui::VideoWidget *mVideoWidget = nullptr;
 
     QTimer *mPositionTimer = nullptr;
     QSlider *mPositionSlider = nullptr;
+
+    GStreamerPipeline *mPipeline = nullptr;
 
     QSharedPointer<Entry> mEntry;
     QSharedPointer<VideoProvider> mProvider;
 
     PlayerMode mMode = PM_Normal;
-    QString mPositionSliderTooltip;
     
     QAction *mModeNormalAction = nullptr,
             *mModeVisualAction = nullptr,
@@ -104,8 +135,9 @@ private:
          mUserSeeks = false,
          mInternalPaused = false;
 
+    bool mUserChooseFormat = false,
+         mIsCustomFormat = false;
 
-    bool mUserChooseFormat = false;
     QString mCurrentFormatId;
     QMenu *mFormatMenu = nullptr;
     QActionGroup *mFormatGroup = nullptr;
@@ -117,4 +149,6 @@ private:
 
     bool mFullscreen = false;
     QAction *mFullscreenAction = nullptr;
+    
+    QVector<CustomFormat> mCustomFormats;
 };
