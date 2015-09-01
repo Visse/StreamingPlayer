@@ -18,7 +18,7 @@ public:
     virtual QSharedPointer<Entry> openUrl( QString url ) override;
 
 private slots:
-    void processExited();
+    void processExited( int exitCode );
 
 private:
     QMap<QProcess*,QSharedPointer<Entry>> mPendingEntries;

@@ -7,6 +7,7 @@
 #include <qjsonarray.h>
 #include <qjsonobject.h>
 #include <qjsonvalue.h>
+#include <qmessagebox.h>
 
 
 GenericUrlOpener::GenericUrlOpener( QObject *parent ) :
@@ -26,7 +27,7 @@ QSharedPointer<Entry> GenericUrlOpener::openUrl( QString url )
 
     
     QProcess *process = new QProcess(this);
-    connect( process, SIGNAL(finished(int)), SLOT(processExited()) );
+    connect( process, SIGNAL(finished(int)), SLOT(processExited(int)) );
     process->start( "youtube-dl", args );
     
     QSharedPointer<Entry> entry( new Entry );
@@ -35,10 +36,15 @@ QSharedPointer<Entry> GenericUrlOpener::openUrl( QString url )
     return entry;
 }
 
-void GenericUrlOpener::processExited()
+void GenericUrlOpener::processExited( int exitCode )
 {
     QProcess *process = qobject_cast<QProcess*>(sender());
     QSharedPointer<Entry> entry = mPendingEntries.take( process );
+
+    if( exitCode != 0 ) {
+        QMessageBox::warning( nullptr, "Generic Url Opener", "Failed to open url!\nError:\n"+QString(process->readAllStandardError()) );
+        return;
+    }
 
     QVariantMap content = QJsonDocument::fromJson(process->readAll()).toVariant().toMap();
 
