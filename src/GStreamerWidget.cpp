@@ -2,9 +2,9 @@
 #include "Feed.h"
 #include "VideoProvider.h"
 #include "GStreamerPipeline.h"
+#include "CreateCustomFormatDialog.h"
 
 #include "ui_VideoPlayer.h"
-#include "ui_CreateCustomFormatDialog.h"
 
 
 #include <qtimer.h>
@@ -292,7 +292,33 @@ void GStreamerWidget::setFormat( QString formatId )
 void GStreamerWidget::setCustomFormat( QString formatTitle )
 {
     if( !formatIsAboutToChange() ) return;
-    /// @todo
+
+    const CustomFormat *format = nullptr;
+    for( const CustomFormat &f : mCustomFormats ) {
+        if( f.title == formatTitle ) {
+            format = &f;
+            break;
+        }
+    }
+
+    if( !format ) return;
+    
+    QList<Format> formats = mProvider->getFormats();
+    
+    QMap<QString, QString> idToUrl;
+    for( const Format &format : formats ) {
+        idToUrl.insert( format.id, format.url );
+    }
+
+
+    for( const CustomStream &stream : format->streams ) {
+        auto iter = idToUrl.find( stream.formatId );
+        if( iter != idToUrl.end() ) {
+            mPipeline->addStream( iter.value(), stream.type );
+        }
+    }
+
+    formatChanged( formatTitle, true );
 }
 
 
@@ -348,12 +374,30 @@ void GStreamerWidget::noFullscreen()
 
 void GStreamerWidget::showCreateCustomFormat()
 {
-    QDialog *dialog = new QDialog( mWidget );
+    if( !mProvider ) return;
 
-    Ui::CreateCustomFormatDialog ui;
-    ui.setupUi( dialog );
+    CreateCustomFormatDialog *dialog = new CreateCustomFormatDialog( mWidget, mProvider->getFormats() );
+    connect( dialog, SIGNAL(createFormat(QString,QString,QString)), SLOT(createCustomFormat(QString,QString,QString)) );
 
     dialog->show();
+}
+
+void GStreamerWidget::createCustomFormat( QString title, QString videoFormat, QString audioFormat )
+{
+    CustomFormat format;
+    format.title = title;
+
+    if( !videoFormat.isEmpty() ) {
+        format.streams.push_back( CustomStream{videoFormat,ST_Video} );
+    }
+    if( !audioFormat.isEmpty() ) {
+        format.streams.push_back( CustomStream{audioFormat,ST_Audio} );
+    }
+
+    if( !format.streams.empty() ) {
+        mCustomFormats.push_back( format );
+        populateFormatMenu();
+    }
 }
 
 void GStreamerWidget::onPositionUpdate()

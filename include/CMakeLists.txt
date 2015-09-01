@@ -23,6 +23,7 @@ set( STREAMING_PLAYER_HEADERS
    ${CMAKE_CURRENT_SOURCE_DIR}/GenericUrlOpener.h
    ${CMAKE_CURRENT_SOURCE_DIR}/GenericVideoProvider.h
    ${CMAKE_CURRENT_SOURCE_DIR}/GStreamerPipeline.h
+   ${CMAKE_CURRENT_SOURCE_DIR}/CreateCustomFormatDialog.h
    PARENT_SCOPE
 )
 

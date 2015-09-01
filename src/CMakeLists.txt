@@ -17,5 +17,6 @@ set( STREAMING_PLAYER_SOURCES
    ${CMAKE_CURRENT_SOURCE_DIR}/YoutubeChannelUrlOpener.cpp
    ${CMAKE_CURRENT_SOURCE_DIR}/GenericUrlOpener.cpp
    ${CMAKE_CURRENT_SOURCE_DIR}/GStreamerPipeline.cpp
+   ${CMAKE_CURRENT_SOURCE_DIR}/CreateCustomFormatDialog.cpp
    PARENT_SCOPE
 )

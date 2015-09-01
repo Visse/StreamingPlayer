@@ -62,7 +62,6 @@ signals:
     void finnishedBuffering();
 
 private slots:
-    void sourceSetup( QGst::ElementPtr source );
     void decodedPadAdded( QGst::ElementPtr decoder, QGst::PadPtr pad );
     void handleBusMessage( const QGst::MessagePtr &message );
 
@@ -70,7 +69,13 @@ private:
     struct StreamInfo {
         StreamType type;
         QString uri;
-        QGst::ElementPtr decoder;
+
+        QGst::ElementPtr source,
+                         queue,
+                         decoder;
+
+        bool isBuffering = false;
+        int percent = 0;
     };
 
 private:
@@ -82,7 +87,8 @@ private:
 
 private:
     QGst::PipelinePtr mPipeline;
-    QGst::ElementPtr  mPlaySink;
+    QGst::ElementPtr  mPlaySink,
+                      mQueue;
 
     QVector<StreamInfo> mStreams;
     
@@ -91,4 +97,6 @@ private:
 
     QTime mLenght,
           mPosition;
+
+    int mPadsFound = 0;
 };

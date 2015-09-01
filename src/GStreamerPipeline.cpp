@@ -5,6 +5,7 @@
 #include <QGst/message.h>
 #include <QGst/query.h>
 #include <QGst/bus.h>
+
 #include <QGlib/connect.h>
 
 static const int DEFAULT_PLAYSINK_FLAGS = 0x41f;
@@ -16,13 +17,16 @@ GStreamerPipeline::GStreamerPipeline( QObject *parent ) :
 {
     mPipeline = QGst::ElementFactory::make("pipeline").dynamicCast<QGst::Pipeline>();
     mPlaySink = QGst::ElementFactory::make("playsink");
+    mQueue = QGst::ElementFactory::make("multiqueue");
 
-    Q_ASSERT( !mPipeline.isNull() && !mPlaySink.isNull() );
+    Q_ASSERT( !mPipeline.isNull() && !mPlaySink.isNull() && !mQueue.isNull() );
 
     mPipeline->add( mPlaySink );
+    mPipeline->add( mQueue );
+
     mPlaySink->setProperty( "flags", DEFAULT_PLAYSINK_FLAGS );
-    qDebug() << "Hello :)";
-    
+    mQueue->setProperty( "sync-by-running-time", true );
+
     QGst::BusPtr bus = mPipeline->bus();
     bus->addSignalWatch();
     QGlib::connect(bus, "message", this, &GStreamerPipeline::handleBusMessage);
@@ -43,7 +47,7 @@ QTime GStreamerPipeline::getLenght()
         mLenght = QGst::ClockTime(quary->duration()).toTime();
     }
     else {
-        qDebug() << "Failed to quary duration of pipeline!";
+        //qDebug() << "Failed to quary duration of pipeline!";
     }
     return mLenght;
 }
@@ -55,7 +59,7 @@ QTime GStreamerPipeline::getPosition()
         mPosition = QGst::ClockTime(quary->position()).toTime();
     }
     else {
-        qDebug() << "Failed to quary position of pipeline!";
+        //qDebug() << "Failed to quary position of pipeline!";
     }
     return mPosition;
 }
@@ -84,13 +88,25 @@ void GStreamerPipeline::enableVideo()
 
 void GStreamerPipeline::addStream( QString uri, StreamType type )
 {
+    // for now, only support adding of streams in the null state.
+    Q_ASSERT( mState == PS_Null );
+
     StreamInfo info;
 
     info.type = type;
     info.uri = uri;
 
-    info.decoder = QGst::ElementFactory::make( "uridecodebin" );
-    Q_ASSERT( info.decoder );
+    info.source  = QGst::ElementFactory::make( "souphttpsrc" );
+    info.queue   = QGst::ElementFactory::make( "queue2" );
+    info.decoder = QGst::ElementFactory::make( "decodebin" );
+    Q_ASSERT( info.source && info.decoder && info.decoder );
+
+    mPipeline->add( info.source );
+    mPipeline->add( info.queue );
+    mPipeline->add( info.decoder );
+
+    info.source->link( info.queue );
+    info.queue->link( info.decoder );
     
     QGst::CapsPtr caps = QGst::Caps::createEmpty();
     if( type & ST_Audio ) {
@@ -103,15 +119,21 @@ void GStreamerPipeline::addStream( QString uri, StreamType type )
         caps->append( QGst::Caps::fromString("text/x-raw") );
     }
     
+    info.source->setProperty( "location", uri );
+    info.source->setProperty( "ssl-strict", false );
+    info.queue->setProperty( "max-size-time", QGst::ClockTime::fromSeconds(20) );
+    info.queue->setProperty( "max-size-bytes", 20*1024*1024 );
+    info.queue->setProperty( "max-size-buffers", 0 );
+    info.queue->setProperty( "low-percent", 1 ); // only start sending buffering messages then the buffer is empthy
+    info.queue->setProperty( "high-percent", 50 ); // consider 100% buffered, when we fill the buffer up to 50%
+    info.queue->setProperty( "use-buffering", true );
+    info.queue->setProperty( "use-rate-estimate", true );
     info.decoder->setProperty( "expose-all-streams", false );
     info.decoder->setProperty( "caps", caps );
-    info.decoder->setProperty( "uri", uri );
-    info.decoder->setProperty( "buffer-duration", QGst::ClockTime::fromSeconds(10) );
 
-    mPipeline->add( info.decoder );
-
-    QGlib::connect( info.decoder, "source-setup", this, &GStreamerPipeline::sourceSetup );
     QGlib::connect( info.decoder, "pad-added", this, &GStreamerPipeline::decodedPadAdded, QGlib::PassSender );
+
+    mStreams.push_back( info );
 }
 
 void GStreamerPipeline::seek( QTime position )
@@ -129,27 +151,33 @@ void GStreamerPipeline::expose()
     overlay->expose();
 }
 
-void GStreamerPipeline::sourceSetup( QGst::ElementPtr source )
-{
-    source->setProperty( "ssl-strict", false );
-}
-
 void GStreamerPipeline::decodedPadAdded( QGst::ElementPtr decoder, QGst::PadPtr pad )
 {
     QString caps = pad->currentCaps()->toString();
 
-    QGst::PadPtr sink;
+    qDebug() << "Decoded pad found, caps: " << caps;
+
+    QGst::PadPtr target;
     if( caps.startsWith("audio/x-raw") ) {
-        sink = mPlaySink->getRequestPad( "audio_sink" );
+        target = mPlaySink->getRequestPad( "audio_raw_sink" );
     }
     else if( caps.startsWith("video/x-raw") ) {
-        sink = mPlaySink->getRequestPad( "video_sink" );
+        target = mPlaySink->getRequestPad( "video_raw_sink" );
     }
     else if( caps.startsWith("text/x-raw") ) {
-        sink = mPlaySink->getRequestPad( "text_sink" );
+        target = mPlaySink->getRequestPad( "text_sink" );
     }
-    if( sink ) {
-        pad->link( sink );
+    if( target ) {
+        mPadsFound++;
+
+        QGst::PadPtr multi_sink,
+                     multi_src;
+        
+        multi_sink =  mQueue->getRequestPad( QString("sink_%1").arg(mPadsFound).toStdString().c_str() );
+        multi_src = mQueue->getStaticPad( QString("src_%1").arg(mPadsFound).toStdString().c_str() );
+        
+        pad->link( multi_sink );
+        multi_src->link( target );
     }
 }
 
@@ -183,6 +211,9 @@ void GStreamerPipeline::switchToState( PipelineState state )
         mPlayAfterBuffering = false;
         break;
     case( PS_Playing ):
+        if( mState == PS_Finnished ) {
+            seek( QTime(0,0) );
+        }
         mPipeline->setState( QGst::StatePlaying );
         mPlayAfterBuffering = true;
         break;
@@ -210,12 +241,34 @@ void GStreamerPipeline::onError( const QGst::ErrorMessagePtr &msg )
 void GStreamerPipeline::onBuffering( const QGst::BufferingMessagePtr &msg )
 {
     int percent = msg->percent();
-    qDebug() << "Buffering... " << percent << "%";
-    if( percent <= 1 ) {
-        switchToState( PS_Buffering );
+    QGst::ObjectPtr source = msg->source();
+
+    int minPercent = 100;
+
+    bool isFromRightSource = false;
+    for( StreamInfo &info : mStreams ) {
+        if( info.queue == source ) {
+            isFromRightSource = true;
+            if( percent <= 5 ) {
+                info.isBuffering = true;
+                switchToState( PS_Buffering );
+            }
+            if( percent == 100 ) {
+                info.isBuffering = false;
+            }
+            info.percent = percent;
+        }
+        if( info.isBuffering ) {
+            minPercent = std::min( minPercent, info.percent );
+        }
     }
-    buffering( percent );
-    if( percent == 100 ) {
+    if( !isFromRightSource ) return;
+
+
+    qDebug() << "Buffering... " << minPercent << "Source: " << source->name();
+
+    buffering( minPercent );
+    if( minPercent == 100 ) {
         finnishedBuffering();
         if( mPlayAfterBuffering ) {
             switchToState( PS_Playing );

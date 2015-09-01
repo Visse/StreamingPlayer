@@ -66,6 +66,8 @@ public slots:
     
     void showCreateCustomFormat();
 
+    void createCustomFormat( QString title, QString videoFormat, QString audioFormat );
+
 private slots:
     void onPositionUpdate();
     void entryChanged();
