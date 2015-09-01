@@ -318,9 +318,12 @@ void GStreamerWidget::fullscreen()
         mWidget->show();
 
         // make sure we fullscreen in the same screen as the player is in
-        mWidget->window()->windowHandle()->setScreen(
-            windowHandle()->screen()  
-        );
+        QWindow *playerWindow = windowHandle();
+        QWindow *widgetWindow = mWidget->windowHandle();
+
+        if( playerWindow && widgetWindow ) {
+            widgetWindow->setScreen( playerWindow->screen() );
+        }
 
         mWidget->showFullScreen();
         mFullscreen = true;
