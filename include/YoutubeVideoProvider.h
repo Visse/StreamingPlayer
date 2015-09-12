@@ -2,6 +2,7 @@
 
 #include "VideoProvider.h"
 
+#include <QTime>
 #include <qpointer.h>
 
 class YoutubeManager;
@@ -13,6 +14,8 @@ public:
     QString videoId;
     QList<Format> formats;
     QPointer<YoutubeManager> youtubeMgr;
+
+    QTime updatedTime;
 
     virtual QList<Format> getFormats() override;
 };
